@@ -201,7 +201,7 @@ class MyAgentState {
 		return path;
 	}
 
-	// Simple move towards position (like working code's moveTowards)
+	// Simple move towards position
 	public Action moveTowardsPosition(Point target) {
 		Point forward = getForwardPosition();
 		Point left = getLeftPosition();
@@ -267,6 +267,51 @@ class MyAgentState {
 
 	public boolean isWithinBounds(int x, int y) {
 		return x >= 0 && x < world.length && y >= 0 && y < world[0].length;
+	}
+
+	// BFS pathfinding to home position
+	public List<Point> findPathToHome() {
+		if (home_x == -1 || home_y == -1) {
+			return null; // Home position not known
+		}
+
+		Queue<Point> frontier = new LinkedList<>();
+		Set<Point> visited = new HashSet<>();
+		Map<Point, Point> cameFrom = new HashMap<>();
+
+		Point start = new Point(agent_x_position, agent_y_position);
+		frontier.add(start);
+		visited.add(start);
+
+		int[] dx = { 0, 1, 0, -1 };
+		int[] dy = { -1, 0, 1, 0 };
+
+		while (!frontier.isEmpty()) {
+			Point current = frontier.poll();
+
+			// Found home!
+			if (current.x == home_x && current.y == home_y) {
+				return reconstructPath(cameFrom, current, start);
+			}
+
+			// Explore neighbors - avoid walls, can go through unknown
+			for (int i = 0; i < 4; i++) {
+				int newX = current.x + dx[i];
+				int newY = current.y + dy[i];
+
+				if (isWithinBounds(newX, newY)) {
+					Point neighbor = new Point(newX, newY);
+
+					if (!visited.contains(neighbor) && world[newX][newY] != WALL) {
+						visited.add(neighbor);
+						cameFrom.put(neighbor, current);
+						frontier.add(neighbor);
+					}
+				}
+			}
+		}
+
+		return null; // No path to home found
 	}
 }
 
@@ -341,7 +386,7 @@ class MyAgentProgram implements AgentProgram {
 		// State update based on the percept value and the last action
 		state.updatePosition((DynamicPercept) percept);
 
-		// *** ADDED: Record home position when detected ***
+		// ADDED: Record home position when detected
 		if (home && state.home_x == -1) {
 			state.home_x = state.agent_x_position;
 			state.home_y = state.agent_y_position;
@@ -374,7 +419,7 @@ class MyAgentProgram implements AgentProgram {
 
 		state.printWorldDebug();
 
-		// *** MODIFIED: Intelligent action selection using BFS ***
+		// MODIFIED: Intelligent action selection using BFS
 
 		// Priority 1: Clean dirt in current cell
 		if (dirt) {
@@ -402,37 +447,35 @@ class MyAgentProgram implements AgentProgram {
 				System.out.println("Reached home! Mission complete.");
 				return NoOpAction.NO_OP;
 			} else {
-				// Simple pathfinding home - move toward home coordinates
-				int dx = state.home_x - state.agent_x_position;
-				int dy = state.home_y - state.agent_y_position;
+				// Use BFS pathfinding to navigate home around obstacles
+				List<MyAgentState.Point> pathToHome = state.findPathToHome();
 
-				if (Math.abs(dx) > Math.abs(dy)) {
-					// Move horizontally
-					if (dx > 0 && state.agent_direction != MyAgentState.EAST) {
-						state.agent_last_action = state.ACTION_TURN_RIGHT;
-						state.agent_direction = (state.agent_direction + 1) % 4;
-						return LIUVacuumEnvironment.ACTION_TURN_RIGHT;
-					} else if (dx < 0 && state.agent_direction != MyAgentState.WEST) {
-						state.agent_last_action = state.ACTION_TURN_LEFT;
-						state.agent_direction = (state.agent_direction - 1 + 4) % 4;
-						return LIUVacuumEnvironment.ACTION_TURN_LEFT;
+				if (pathToHome != null && !pathToHome.isEmpty()) {
+					MyAgentState.Point nextStep = pathToHome.get(0);
+					Action moveAction = state.moveTowardsPosition(nextStep);
+
+					if (moveAction != null) {
+						// Update direction for turns
+						if (moveAction == LIUVacuumEnvironment.ACTION_TURN_LEFT) {
+							state.agent_last_action = state.ACTION_TURN_LEFT;
+							state.agent_direction = (state.agent_direction - 1 + 4) % 4;
+						} else if (moveAction == LIUVacuumEnvironment.ACTION_TURN_RIGHT) {
+							state.agent_last_action = state.ACTION_TURN_RIGHT;
+							state.agent_direction = (state.agent_direction + 1) % 4;
+						} else if (moveAction == LIUVacuumEnvironment.ACTION_MOVE_FORWARD) {
+							state.agent_last_action = state.ACTION_MOVE_FORWARD;
+						}
+
+						System.out.println("Navigating home via " + nextStep);
+						return moveAction;
 					}
 				} else {
-					// Move vertically
-					if (dy > 0 && state.agent_direction != MyAgentState.SOUTH) {
-						state.agent_last_action = state.ACTION_TURN_RIGHT;
-						state.agent_direction = (state.agent_direction + 1) % 4;
-						return LIUVacuumEnvironment.ACTION_TURN_RIGHT;
-					} else if (dy < 0 && state.agent_direction != MyAgentState.NORTH) {
-						state.agent_last_action = state.ACTION_TURN_LEFT;
-						state.agent_direction = (state.agent_direction - 1 + 4) % 4;
-						return LIUVacuumEnvironment.ACTION_TURN_LEFT;
-					}
+					System.out.println("No path to home found! Using fallback.");
+					// Fallback: turn and try again
+					state.agent_last_action = state.ACTION_TURN_RIGHT;
+					state.agent_direction = (state.agent_direction + 1) % 4;
+					return LIUVacuumEnvironment.ACTION_TURN_RIGHT;
 				}
-
-				System.out.println("Moving toward home...");
-				state.agent_last_action = state.ACTION_MOVE_FORWARD;
-				return LIUVacuumEnvironment.ACTION_MOVE_FORWARD;
 			}
 		}
 
